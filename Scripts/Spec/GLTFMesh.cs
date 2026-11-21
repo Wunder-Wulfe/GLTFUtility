@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using UnityEngine;
 using UnityEngine.Scripting;
@@ -62,7 +63,7 @@ namespace Siccity.GLTFUtility {
 					public int prim;
 				}
 
-				public MeshData(GLTFMesh gltfMesh, GLTFAccessor.ImportResult[] accessors, GLTFBufferView.ImportResult[] bufferViews) {
+				public MeshData(GLTFMesh gltfMesh, GLTFAccessor.ImportResult[] accessors, GLTFBufferView.ImportResult[] bufferViews, float importScale = 1.0f) {
 					name = gltfMesh.name;
 					if (gltfMesh.primitives.Count == 0) {
 						Debug.LogWarning("0 primitives in mesh");
@@ -99,10 +100,10 @@ namespace Siccity.GLTFUtility {
 								int vertCount = verts.Count();
 								submeshTris.Add(asyncMesh.tris.Reverse().Select(x => x + vertCount).ToList());
 
-								verts.AddRange(asyncMesh.verts.Select(x => new Vector3(-x.x, x.y, x.z)));
+								verts.AddRange( UnityConvertBulk(asyncMesh.verts, importScale) );
 
 								if (asyncMesh.norms != null) {
-									normals.AddRange(asyncMesh.norms.Select(v => { v.x = -v.x; return v; }));
+									normals.AddRange( UnityConvertBulk(asyncMesh.norms) );
 								}
 								//tangents.AddRange(asyncMesh.tangents.Select(v => { v.y = -v.y; v.z = -v.z; return v; }));
 
@@ -128,20 +129,20 @@ namespace Siccity.GLTFUtility {
 								// UVs
 								if (asyncMesh.uv != null) {
 									if (uv1 == null) uv1 = new List<Vector2>();
-									uv1.AddRange(asyncMesh.uv.Select(x => new Vector2(x.x, -x.y)));
+									uv1.AddRange( UnityConvertBulk(asyncMesh.uv) );
 								}
 							}
 							// Load normal mesh
 							else {
 								int vertStartIndex = verts.Count;
 								submeshVertexStart.Add(vertStartIndex);
-
+								
 								// Verts - (X points left in GLTF)
 								if (primitive.attributes.POSITION.HasValue) {
-									IEnumerable<Vector3> newVerts = accessors[primitive.attributes.POSITION.Value].ReadVec3(true).Select(v => { v.x = -v.x; return v; });
+									IEnumerable<Vector3> newVerts = UnityConvertBulk(accessors[primitive.attributes.POSITION.Value].ReadVec3(true), importScale);
 									verts.AddRange(newVerts);
 								}
-
+								
 								submeshVertexCount.Add(verts.Count - vertStartIndex);
 
 								int vertCount = verts.Count;
@@ -150,17 +151,16 @@ namespace Siccity.GLTFUtility {
 								if (primitive.indices.HasValue) {
 									submeshTris.Add(new List<int>(accessors[primitive.indices.Value].ReadInt().Reverse().Select(x => x + vertStartIndex)));
 									submeshTrisMode.Add(primitive.mode);
-					
 								}
 
 								/// Normals - (X points left in GLTF)
 								if (primitive.attributes.NORMAL.HasValue) {
-									normals.AddRange(accessors[primitive.attributes.NORMAL.Value].ReadVec3(true).Select(v => { v.x = -v.x; return v; }));
+									normals.AddRange( UnityConvertBulk(accessors[primitive.attributes.NORMAL.Value].ReadVec3(true)) );
 								}
 
 								// Tangents - (X points left in GLTF)
 								if (primitive.attributes.TANGENT.HasValue) {
-									tangents.AddRange(accessors[primitive.attributes.TANGENT.Value].ReadVec4(true).Select(v => { v.y = -v.y; v.z = -v.z; return v; }));
+									tangents.AddRange( UnityConvertBulk(accessors[primitive.attributes.TANGENT.Value].ReadVec4(true)) );
 								}
 
 								// Vertex colors
@@ -221,7 +221,7 @@ namespace Siccity.GLTFUtility {
 							if (primitive.targets != null) {
 								for (int k = 0; k < primitive.targets.Count; k++) {
 									BlendShape blendShape = new BlendShape();
-									blendShape.pos = GetMorphWeights(primitive.targets[k].POSITION, submeshVertexStart[i], finalVertCount, accessors);
+									blendShape.pos = GetMorphWeights(primitive.targets[k].POSITION, submeshVertexStart[i], finalVertCount, accessors, importScale);
 									blendShape.norm = GetMorphWeights(primitive.targets[k].NORMAL, submeshVertexStart[i], finalVertCount, accessors);
 									blendShape.tan = GetMorphWeights(primitive.targets[k].TANGENT, submeshVertexStart[i], finalVertCount, accessors);
 									blendShape.startvert = submeshVertexStart[i];
@@ -236,13 +236,38 @@ namespace Siccity.GLTFUtility {
 					}
 				}
 
-				private Vector3[] GetMorphWeights(int? accessor, int vertStartIndex, int vertCount, GLTFAccessor.ImportResult[] accessors) {
+				private static Vector2 UnityConvert(in Vector2 v, in float scale = 1.0f) {
+					return new Vector2(v.x * scale, -v.y * scale);
+				}
+
+				private static Vector3 UnityConvert(in Vector3 v, in float scale=1.0f) {
+					return new Vector3(-v.x * scale, v.y * scale, v.z * scale);
+				}
+
+				private static Vector4 UnityConvert(in Vector4 v, in float scale = 1.0f) {
+					return new Vector4(-v.x * scale, v.y * scale, v.z * scale, -v.w * scale);
+				}
+
+				private static IEnumerable<Vector2> UnityConvertBulk(IEnumerable<Vector2> data, float scale = 1.0f) {
+					foreach (Vector2 item in data)
+						yield return UnityConvert(item, scale);
+				}
+				private static IEnumerable<Vector3> UnityConvertBulk(IEnumerable<Vector3> data, float scale = 1.0f) {
+					foreach (Vector3 item in data)
+						yield return UnityConvert(item, scale);
+				}
+				private static IEnumerable<Vector4> UnityConvertBulk(IEnumerable<Vector4> data, float scale = 1.0f) {
+					foreach (Vector4 item in data)
+						yield return UnityConvert(item, scale);
+				}
+
+				private static Vector3[] GetMorphWeights(int? accessor, int vertStartIndex, int vertCount, GLTFAccessor.ImportResult[] accessors, float importScale = 1.0f) {
 					if (accessor.HasValue) {
 						if (accessors[accessor.Value] == null) {
 							Debug.LogWarning("Accessor is null");
 							return new Vector3[vertCount];
 						}
-						Vector3[] accessorData = accessors[accessor.Value].ReadVec3(true).Select(v => { v.x = -v.x; return v; }).ToArray();
+						Vector3[] accessorData = UnityConvertBulk(accessors[accessor.Value].ReadVec3(true), importScale).ToArray();
 						if (accessorData.Length != vertCount) {
 							Vector3[] resized = new Vector3[vertCount];
 							Array.Copy(accessorData, 0, resized, vertStartIndex, accessorData.Length);
@@ -250,6 +275,8 @@ namespace Siccity.GLTFUtility {
 						} else return accessorData;
 					} else return new Vector3[vertCount];
 				}
+
+				private Regex blendShapeRegex = new Regex("^(.+?)\\s*(?:\\(\\s*(\\d+)\\s*(?:of|\\/)\\s*(\\d+)\\s*\\)\\s*)?$");
 
 				public Mesh ToMesh() {
 					Mesh mesh = new Mesh();
@@ -321,7 +348,7 @@ namespace Siccity.GLTFUtility {
                             {
 								temp.pos[k] = new Vector3(0, 0, 0);
 								temp.norm[k] = new Vector3(0, 0, 0);
-								temp.tan[k] = new Vector3(0, 0, 0);
+								temp.tan[k] = new Vector4(0, 0, 0, 1);
 							}
 							for (int k = blendShapes[i].startvert; k < blendShapes[i].startvert + blendShapes[i].vertcount; k++)
 							{
@@ -336,8 +363,25 @@ namespace Siccity.GLTFUtility {
                         }
 					}
 					// Blend shapes
+
+					string blendShapeName;
+					float blendShapeWeight;
+					Match regexMatch;
 					for (int i = 0; i < keep.Count; i++) {
-						mesh.AddBlendShapeFrame(keep[i].name, 1, keep[i].pos, keep[i].norm, keep[i].tan);
+						regexMatch = blendShapeRegex.Match(keep[i].name);
+
+						if (regexMatch.Groups[2].Value == "")
+							blendShapeWeight = 100f;
+						else
+							blendShapeWeight = 100f * (float.Parse(regexMatch.Groups[2].Value) / float.Parse(regexMatch.Groups[3].Value));
+
+						mesh.AddBlendShapeFrame(
+							regexMatch.Groups[1].Value,
+							blendShapeWeight,
+							keep[i].pos,
+							keep[i].norm,
+							keep[i].tan
+						);
 					}
 
 					if (normals.Count == 0 && onlyTriangles)
@@ -401,7 +445,7 @@ namespace Siccity.GLTFUtility {
 
 					meshData = new MeshData[meshes.Count];
 					for (int i = 0; i < meshData.Length; i++) {
-						meshData[i] = new MeshData(meshes[i], accessorTask.Result, bufferViewTask.Result);
+						meshData[i] = new MeshData(meshes[i], accessorTask.Result, bufferViewTask.Result, importSettings.unitScale);
 					}
 				});
 			}
